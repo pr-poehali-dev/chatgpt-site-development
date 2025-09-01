@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
@@ -10,6 +10,8 @@ import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import Icon from '@/components/ui/icon';
 
 type Message = {
@@ -38,6 +40,19 @@ type UserProfile = {
   };
 };
 
+type AuthUser = {
+  id: string;
+  name: string;
+  email: string;
+  password: string;
+  registeredAt: Date;
+};
+
+type AuthState = {
+  isAuthenticated: boolean;
+  user: AuthUser | null;
+};
+
 const Index = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
@@ -47,16 +62,51 @@ const Index = () => {
   const [notifications, setNotifications] = useState(true);
   const [language, setLanguage] = useState('ru');
   
-  const [userProfile] = useState<UserProfile>({
-    name: 'Александр Иванов',
-    email: 'alex.ivanov@example.com',
-    avatar: 'АИ',
-    plan: 'pro',
-    usage: {
-      messages: 1247,
-      limit: 2000
-    }
+  // Authentication state
+  const [authState, setAuthState] = useState<AuthState>({
+    isAuthenticated: false,
+    user: null
   });
+  const [showAuthDialog, setShowAuthDialog] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('register');
+  const [authForm, setAuthForm] = useState({
+    name: '',
+    email: '',
+    password: '',
+    confirmPassword: ''
+  });
+  const [authError, setAuthError] = useState('');
+  const [authLoading, setAuthLoading] = useState(false);
+  
+  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
+  
+  // Check authentication on component mount
+  useEffect(() => {
+    const savedAuth = localStorage.getItem('chatbot-auth');
+    if (savedAuth) {
+      try {
+        const authData = JSON.parse(savedAuth);
+        setAuthState({
+          isAuthenticated: true,
+          user: authData.user
+        });
+        setUserProfile({
+          name: authData.user.name,
+          email: authData.user.email,
+          avatar: authData.user.name.split(' ').map((n: string) => n[0]).join(''),
+          plan: 'free',
+          usage: {
+            messages: 0,
+            limit: 100
+          }
+        });
+      } catch (error) {
+        localStorage.removeItem('chatbot-auth');
+      }
+    } else {
+      setShowAuthDialog(true);
+    }
+  }, []);
   
   const [savedChats] = useState<SavedChat[]>([
     {
@@ -100,6 +150,110 @@ const Index = () => {
   const handleMenuClick = (section: string) => {
     setCurrentSection(section);
     setIsSidebarOpen(false);
+  };
+  
+  const handleAuthSubmit = async () => {
+    setAuthError('');
+    setAuthLoading(true);
+    
+    try {
+      // Validate form
+      if (!authForm.name.trim() || !authForm.email.trim() || !authForm.password.trim()) {
+        throw new Error('Заполните все поля');
+      }
+      
+      if (authMode === 'register') {
+        if (authForm.password !== authForm.confirmPassword) {
+          throw new Error('Пароли не совпадают');
+        }
+        if (authForm.password.length < 6) {
+          throw new Error('Пароль должен содержать минимум 6 символов');
+        }
+        
+        // Check if user already exists
+        const existingUsers = JSON.parse(localStorage.getItem('chatbot-users') || '[]');
+        if (existingUsers.find((u: AuthUser) => u.email === authForm.email)) {
+          throw new Error('Пользователь с таким email уже существует');
+        }
+        
+        // Create new user
+        const newUser: AuthUser = {
+          id: Date.now().toString(),
+          name: authForm.name,
+          email: authForm.email,
+          password: authForm.password, // In real app, this would be hashed
+          registeredAt: new Date()
+        };
+        
+        existingUsers.push(newUser);
+        localStorage.setItem('chatbot-users', JSON.stringify(existingUsers));
+        localStorage.setItem('chatbot-auth', JSON.stringify({ user: newUser }));
+        
+        setAuthState({
+          isAuthenticated: true,
+          user: newUser
+        });
+        
+        setUserProfile({
+          name: newUser.name,
+          email: newUser.email,
+          avatar: newUser.name.split(' ').map(n => n[0]).join(''),
+          plan: 'free',
+          usage: {
+            messages: 0,
+            limit: 100
+          }
+        });
+        
+      } else {
+        // Login logic
+        const existingUsers = JSON.parse(localStorage.getItem('chatbot-users') || '[]');
+        const user = existingUsers.find((u: AuthUser) => 
+          u.email === authForm.email && u.password === authForm.password
+        );
+        
+        if (!user) {
+          throw new Error('Неверные данные для входа');
+        }
+        
+        localStorage.setItem('chatbot-auth', JSON.stringify({ user }));
+        
+        setAuthState({
+          isAuthenticated: true,
+          user
+        });
+        
+        setUserProfile({
+          name: user.name,
+          email: user.email,
+          avatar: user.name.split(' ').map(n => n[0]).join(''),
+          plan: 'free',
+          usage: {
+            messages: 0,
+            limit: 100
+          }
+        });
+      }
+      
+      setShowAuthDialog(false);
+      setAuthForm({ name: '', email: '', password: '', confirmPassword: '' });
+      
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : 'Произошла ошибка');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+  
+  const handleLogout = () => {
+    localStorage.removeItem('chatbot-auth');
+    setAuthState({
+      isAuthenticated: false,
+      user: null
+    });
+    setUserProfile(null);
+    setMessages([]);
+    setShowAuthDialog(true);
   };
 
   const handleSendMessage = () => {
@@ -317,7 +471,10 @@ const Index = () => {
     </div>
   );
   
-  const renderProfileSection = () => (
+  const renderProfileSection = () => {
+    if (!userProfile) return null;
+    
+    return (
     <div className="flex-1 p-6">
       <div className="max-w-2xl mx-auto">
         <h2 className="text-2xl font-bold text-white mb-6">Профиль</h2>
@@ -390,9 +547,13 @@ const Index = () => {
                 <Icon name="Download" size={16} className="mr-3" />
                 Экспорт данных
               </Button>
-              <Button variant="outline" className="w-full justify-start bg-gray-700 border-gray-600 text-red-400 hover:text-red-300">
-                <Icon name="Trash" size={16} className="mr-3" />
-                Удалить аккаунт
+              <Button 
+                variant="outline" 
+                className="w-full justify-start bg-gray-700 border-gray-600 text-red-400 hover:text-red-300"
+                onClick={handleLogout}
+              >
+                <Icon name="LogOut" size={16} className="mr-3" />
+                Выйти из аккаунта
               </Button>
             </div>
           </Card>
@@ -402,7 +563,9 @@ const Index = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#1f1f1f] flex">
+    <>
+      {renderAuthDialog()}
+      <div className="min-h-screen bg-[#1f1f1f] flex">
       {/* Desktop Sidebar */}
       <div className="hidden md:flex flex-col w-64 bg-[#171717] border-r border-gray-700">
         <div className="p-4">
@@ -642,6 +805,7 @@ const Index = () => {
         )}
       </div>
     </div>
+    </>
   );
 };
 
